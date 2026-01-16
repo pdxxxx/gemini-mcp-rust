@@ -1,0 +1,45 @@
+[package]
+name = "gemini-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "MCP server that wraps Gemini CLI as a standard MCP protocol interface"
+authors = ["pdxxxx pdycat@protonmail.com"]
+license = "MIT"
+repository = "https://github.com/pdxxxx/codex-mcp-rust"
+keywords = ["mcp", "gemini", "cli", "ai", "rust"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "gemini-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# MCP SDK
+rmcp = { version = "0.13", features = ["server", "transport-io"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Utilities
+which = "7"
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,15 @@
+# Build artifacts
+/target/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ace tool
+.ace-tool/
+
+# OS
+.DS_Store
+Thumbs.db
