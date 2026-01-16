@@ -18,13 +18,13 @@ function Write-Success {
     Write-Host $Message
 }
 
-function Write-Warning {
+function Write-Warn {
     param([string]$Message)
     Write-Host "[WARNING] " -ForegroundColor Yellow -NoNewline
     Write-Host $Message
 }
 
-function Write-Error {
+function Write-Err {
     param([string]$Message)
     Write-Host "[ERROR] " -ForegroundColor Red -NoNewline
     Write-Host $Message
@@ -89,7 +89,7 @@ function Install-GeminiMcp {
         Write-Success "已安装到: $InstallPath"
     }
     catch {
-        Write-Error "下载失败: $_"
+        Write-Err "下载失败: $_"
         exit 1
     }
 }
@@ -97,16 +97,24 @@ function Install-GeminiMcp {
 function Add-ClaudeCodeConfig {
     param([string]$InstallPath)
 
-    $configDir = Join-Path $env:USERPROFILE ".claude"
-    $configFile = Join-Path $configDir "claude_desktop_config.json"
-
-    # 创建配置目录
-    if (-not (Test-Path $configDir)) {
-        New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    # 首先尝试使用 claude mcp add 命令
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if ($claudeCmd) {
+        Write-Info "检测到 Claude Code CLI，尝试使用 claude mcp add 命令..."
+        try {
+            & claude mcp add gemini $InstallPath 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "已通过 Claude CLI 添加 gemini MCP 配置"
+                return
+            }
+        }
+        catch {
+            Write-Warn "claude mcp add 命令失败，尝试手动配置..."
+        }
     }
 
-    # 转义路径中的反斜杠
-    $escapedPath = $InstallPath.Replace("\", "\\")
+    # 手动配置 ~/.claude.json
+    $configFile = Join-Path $env:USERPROFILE ".claude.json"
 
     if (Test-Path $configFile) {
         # 备份原配置
@@ -123,22 +131,25 @@ function Add-ClaudeCodeConfig {
             }
 
             if ($config.mcpServers.gemini) {
-                Write-Warning "Claude Code 配置中已存在 gemini 配置，正在更新..."
+                Write-Warn "配置中已存在 gemini，正在更新..."
             }
 
             $config.mcpServers | Add-Member -NotePropertyName "gemini" -NotePropertyValue @{
                 command = $InstallPath
+                args = @()
             } -Force
 
             $config | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-            Write-Success "已更新 Claude Code 配置"
+            Write-Success "已更新 Claude Code 配置: $configFile"
         }
         catch {
-            Write-Warning "无法解析现有配置文件，请手动添加以下配置:"
+            Write-Warn "无法解析现有配置文件，请手动编辑 $configFile"
+            Write-Info "添加以下内容到 mcpServers 中:"
             Write-Host ""
-            Write-Host "  `"gemini`": {"
-            Write-Host "    `"command`": `"$escapedPath`""
-            Write-Host "  }"
+            Write-Host '    "gemini": {'
+            Write-Host "      `"command`": `"$($InstallPath.Replace('\', '\\'))`","
+            Write-Host '      "args": []'
+            Write-Host '    }'
             return
         }
     }
@@ -148,11 +159,12 @@ function Add-ClaudeCodeConfig {
             mcpServers = @{
                 gemini = @{
                     command = $InstallPath
+                    args = @()
                 }
             }
         }
         $config | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-        Write-Success "已创建 Claude Code 配置"
+        Write-Success "已创建 Claude Code 配置: $configFile"
     }
 }
 
@@ -164,7 +176,7 @@ function Add-ToPath {
         $newPath = "$currentPath;$Directory"
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
         Write-Success "已将 $Directory 添加到用户 PATH"
-        Write-Warning "请重新打开终端以使 PATH 更改生效"
+        Write-Warn "请重新打开终端以使 PATH 更改生效"
     }
 }
 
@@ -179,7 +191,7 @@ function Main {
     Write-Info "正在获取最新版本..."
     $latestVersion = Get-LatestVersion
     if (-not $latestVersion) {
-        Write-Error "无法获取最新版本信息"
+        Write-Err "无法获取最新版本信息"
         exit 1
     }
     Write-Info "最新版本: $latestVersion"
@@ -239,6 +251,9 @@ function Main {
     Write-Host ""
     Write-Host "使用方法:"
     Write-Host "  $installPath --help"
+    Write-Host ""
+    Write-Host "如需手动配置 Claude Code，请编辑 ~/.claude.json 或运行:"
+    Write-Host "  claude mcp add gemini `"$installPath`""
     Write-Host ""
 }
 
