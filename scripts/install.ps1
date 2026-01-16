@@ -1,5 +1,5 @@
 # Gemini MCP Server 安装脚本 (Windows PowerShell)
-# 支持 Windows x86_64
+# 支持 Windows x86_64 和 ARM64
 
 $ErrorActionPreference = "Stop"
 
@@ -31,13 +31,54 @@ function Write-Err {
 }
 
 function Get-LatestVersion {
+    $tag = $null
+    $response = $null
+
+    # 方法 1: GitHub API (受速率限制，每 IP 每小时 60 次)
     try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest"
-        return $release.tag_name
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$REPO/releases/latest" -TimeoutSec 10
+        $tag = $release.tag_name
+    }
+    catch {
+        $tag = $null
+    }
+
+    # 验证版本格式
+    if ($tag -and $tag -ne "latest" -and $tag -match '^v?\d+\.\d+\.\d+') {
+        return $tag
+    }
+
+    # 方法 2: Fallback 到 Release 页面重定向 URL (无速率限制)
+    try {
+        $request = [System.Net.WebRequest]::Create("https://github.com/$REPO/releases/latest")
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = 10000
+
+        try {
+            $response = $request.GetResponse()
+        }
+        catch [System.Net.WebException] {
+            $response = $_.Exception.Response
+        }
+
+        if ($response -and $response.Headers) {
+            $location = $response.Headers["Location"]
+            if ($location) {
+                $tag = $location.Split("/")[-1]
+                if ($tag -and $tag -ne "latest" -and $tag -match '^v?\d+\.\d+\.\d+') {
+                    return $tag
+                }
+            }
+        }
     }
     catch {
         return $null
     }
+    finally {
+        if ($response) { $response.Close() }
+    }
+
+    return $null
 }
 
 function Get-InstalledVersion {
@@ -63,7 +104,21 @@ function Install-GeminiMcp {
         [string]$InstallPath
     )
 
+    # 架构检测：优先使用 OSArchitecture（避免 ARM64 上运行 x64 PowerShell 误判）
     $platform = "windows-amd64"
+    try {
+        $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        if ($osArch -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+            $platform = "windows-arm64"
+        }
+    }
+    catch {
+        # Fallback: 使用环境变量检测
+        if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
+            $platform = "windows-arm64"
+        }
+    }
+
     $downloadUrl = "https://github.com/$REPO/releases/download/$Version/$BINARY_NAME-$platform.exe"
 
     Write-Info "正在下载 $BINARY_NAME $Version ($platform)..."
@@ -75,22 +130,43 @@ function Install-GeminiMcp {
         New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     }
 
-    # 下载文件
+    # 下载文件 - 使用 try/finally 确保临时文件被清理
+    $tempFile = [System.IO.Path]::GetTempFileName()
+    $exeTempFile = $tempFile + ".exe"
+
     try {
-        $tempFile = [System.IO.Path]::GetTempFileName() + ".exe"
-        Invoke-WebRequest -Uri $downloadUrl -OutFile $tempFile -UseBasicParsing
+        # 下载到临时文件
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $exeTempFile -TimeoutSec 300
+
+        # 验证下载的文件不为空
+        if (-not (Test-Path $exeTempFile) -or (Get-Item $exeTempFile).Length -eq 0) {
+            Write-Err "下载的文件为空"
+            exit 1
+        }
+
+        # 验证是否为有效的 Windows 可执行文件 (检查 MZ 头)
+        $magic = [System.IO.File]::ReadAllBytes($exeTempFile)[0..1]
+        if ($magic.Length -lt 2 -or $magic[0] -ne 0x4D -or $magic[1] -ne 0x5A) {
+            Write-Err "下载的文件不是有效的 Windows 可执行文件"
+            exit 1
+        }
 
         # 移动文件
         if (Test-Path $InstallPath) {
             Remove-Item $InstallPath -Force
         }
-        Move-Item $tempFile $InstallPath -Force
+        Move-Item $exeTempFile $InstallPath -Force
 
         Write-Success "已安装到: $InstallPath"
     }
     catch {
         Write-Err "下载失败: $_"
         exit 1
+    }
+    finally {
+        # 清理所有临时文件
+        if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue }
+        if (Test-Path $exeTempFile) { Remove-Item $exeTempFile -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -102,7 +178,8 @@ function Test-ExistingMcp {
 
     try {
         $mcpList = & claude mcp list 2>$null
-        if ($mcpList -match "gemini") {
+        # 精确匹配名为 "gemini" 的 MCP（避免匹配到 gemini-pro 等其他名称）
+        if ($mcpList -match '(?m)^\s*gemini(?:\s|:|$)') {
             return $true
         }
     }

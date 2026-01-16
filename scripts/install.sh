@@ -73,7 +73,23 @@ detect_platform() {
 
 # 获取最新版本
 get_latest_version() {
-    curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'
+    local ver=""
+    # 方法 1: GitHub API (受速率限制，每 IP 每小时 60 次)
+    ver=$(curl -s --connect-timeout 10 --max-time 15 "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+    # 方法 2: Fallback 到 Release 页面重定向 URL (无速率限制)
+    if [ -z "$ver" ]; then
+        local effective_url=""
+        effective_url=$(curl -sL --connect-timeout 10 --max-time 15 -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null)
+        ver="${effective_url##*/}"
+    fi
+
+    # 验证版本格式
+    if [ -n "$ver" ] && [ "$ver" != "latest" ] && echo "$ver" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+        echo "$ver"
+    else
+        echo ""
+    fi
 }
 
 # 获取当前安装版本
@@ -93,28 +109,64 @@ download_and_install() {
     local install_path="$3"
 
     local download_url="https://github.com/${REPO}/releases/download/${version}/${BINARY_NAME}-${platform}"
+    local install_dir=$(dirname "$install_path")
+    local run_as=""
+
+    # 检查写入权限，如果需要则使用 sudo
+    if [ -d "$install_dir" ] && [ ! -w "$install_dir" ]; then
+        run_as="sudo"
+        print_warning "需要管理员权限写入 $install_dir"
+    elif [ ! -d "$install_dir" ]; then
+        local parent_dir=$(dirname "$install_dir")
+        if [ -d "$parent_dir" ] && [ ! -w "$parent_dir" ]; then
+            run_as="sudo"
+            print_warning "需要管理员权限创建 $install_dir"
+        fi
+    fi
+
+    # 检查 sudo 是否可用
+    if [ -n "$run_as" ] && ! command -v sudo &> /dev/null; then
+        print_error "需要 sudo 权限，但系统未安装 sudo"
+        exit 1
+    fi
 
     print_info "正在下载 ${BINARY_NAME} ${version} (${platform})..."
 
-    local tmp_file=$(mktemp)
-    if ! curl -fsSL "$download_url" -o "$tmp_file"; then
+    # 创建临时文件并设置清理 trap
+    local tmp_file
+    tmp_file=$(mktemp "${TMPDIR:-/tmp}/${BINARY_NAME}.XXXXXX")
+    trap 'rm -f "'"$tmp_file"'"' EXIT INT TERM
+
+    # 根据是否为终端决定进度显示方式
+    local curl_progress="--progress-bar"
+    if [ ! -t 1 ]; then
+        curl_progress="-sS"
+    fi
+
+    # 使用 --progress-bar 显示进度，-L 跟随重定向，-f 失败时静默，--max-time 限制总耗时
+    if ! curl -fL --connect-timeout 30 --max-time 300 $curl_progress "$download_url" -o "$tmp_file"; then
         print_error "下载失败: $download_url"
-        rm -f "$tmp_file"
+        exit 1
+    fi
+
+    # 验证下载的文件不为空
+    if [ ! -s "$tmp_file" ]; then
+        print_error "下载的文件为空"
         exit 1
     fi
 
     # 创建目标目录
-    local install_dir=$(dirname "$install_path")
     if [ ! -d "$install_dir" ]; then
         print_info "创建目录: $install_dir"
-        mkdir -p "$install_dir"
+        $run_as mkdir -p "$install_dir"
     fi
 
     # 移动文件并设置权限
-    mv "$tmp_file" "$install_path"
-    chmod +x "$install_path"
+    $run_as mv "$tmp_file" "$install_path"
+    $run_as chmod +x "$install_path"
 
     print_success "已安装到: $install_path"
+    trap - EXIT INT TERM
 }
 
 # 检查 gemini MCP 是否已存在
@@ -123,8 +175,8 @@ check_existing_mcp() {
         return 1
     fi
 
-    # 检查 gemini 是否已在 MCP 列表中
-    if claude mcp list 2>/dev/null | grep -q "gemini"; then
+    # 精确匹配名为 "gemini" 的 MCP（避免匹配到 gemini-pro 等其他名称）
+    if claude mcp list 2>/dev/null | grep -Eq '^[[:space:]]*gemini([[:space:]]|:|$)'; then
         return 0
     fi
     return 1
@@ -235,10 +287,41 @@ main() {
     # 检查 PATH
     local install_dir=$(dirname "$install_path")
     if [[ ":$PATH:" != *":$install_dir:"* ]]; then
-        print_warning "安装目录不在 PATH 中，建议添加以下内容到 ~/.bashrc 或 ~/.zshrc:"
-        echo ""
-        echo "  export PATH=\"\$PATH:$install_dir\""
-        echo ""
+        print_warning "安装目录不在 PATH 中"
+
+        # 自动检测用户 Shell 配置文件
+        local shell_config=""
+        case "$SHELL" in
+            */zsh)  shell_config="$HOME/.zshrc" ;;
+            */bash) shell_config="$HOME/.bashrc" ;;
+            *)      shell_config="" ;;
+        esac
+
+        if [ -n "$shell_config" ] && [ -f "$shell_config" ]; then
+            read -p "是否自动将路径添加到 $shell_config? [Y/n]: " auto_path
+            if [ "$auto_path" != "n" ] && [ "$auto_path" != "N" ]; then
+                # 幂等检查：避免重复添加
+                if grep -Fqs "$install_dir" "$shell_config"; then
+                    print_info "检测到 $shell_config 已包含 $install_dir，跳过写入"
+                else
+                    echo "" >> "$shell_config"
+                    echo "# Gemini MCP Server" >> "$shell_config"
+                    echo "export PATH=\"\$PATH:$install_dir\"" >> "$shell_config"
+                    print_success "已添加到 $shell_config"
+                fi
+                print_info "请运行 'source $shell_config' 或重新打开终端使其生效"
+            else
+                echo ""
+                echo "  请手动添加以下内容到你的 shell 配置文件:"
+                echo "  export PATH=\"\$PATH:$install_dir\""
+                echo ""
+            fi
+        else
+            echo ""
+            echo "  请手动添加以下内容到 ~/.bashrc 或 ~/.zshrc:"
+            echo "  export PATH=\"\$PATH:$install_dir\""
+            echo ""
+        fi
     fi
 
     echo ""
