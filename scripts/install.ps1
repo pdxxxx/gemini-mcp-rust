@@ -94,77 +94,78 @@ function Install-GeminiMcp {
     }
 }
 
+function Test-ExistingMcp {
+    $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+    if (-not $claudeCmd) {
+        return $false
+    }
+
+    try {
+        $mcpList = & claude mcp list 2>$null
+        if ($mcpList -match "gemini") {
+            return $true
+        }
+    }
+    catch {
+        return $false
+    }
+    return $false
+}
+
 function Add-ClaudeCodeConfig {
     param([string]$InstallPath)
 
-    # 首先尝试使用 claude mcp add 命令
+    # 检查 claude 命令是否可用
     $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
-    if ($claudeCmd) {
-        Write-Info "检测到 Claude Code CLI，尝试使用 claude mcp add 命令..."
-        try {
-            & claude mcp add gemini $InstallPath 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "已通过 Claude CLI 添加 gemini MCP 配置"
-                return
-            }
-        }
-        catch {
-            Write-Warn "claude mcp add 命令失败，尝试手动配置..."
-        }
+    if (-not $claudeCmd) {
+        Write-Err "未找到 claude 命令，请先安装 Claude Code CLI"
+        Write-Info "安装后可手动运行: claude mcp add gemini `"$InstallPath`""
+        return $false
     }
 
-    # 手动配置 ~/.claude.json
-    $configFile = Join-Path $env:USERPROFILE ".claude.json"
-
-    if (Test-Path $configFile) {
-        # 备份原配置
-        $backupFile = "$configFile.backup"
-        Copy-Item $configFile $backupFile -Force
-        Write-Info "已备份原配置到: $backupFile"
-
-        # 读取并更新配置
-        try {
-            $config = Get-Content $configFile -Raw | ConvertFrom-Json
-
-            if (-not $config.mcpServers) {
-                $config | Add-Member -NotePropertyName "mcpServers" -NotePropertyValue @{} -Force
-            }
-
-            if ($config.mcpServers.gemini) {
-                Write-Warn "配置中已存在 gemini，正在更新..."
-            }
-
-            $config.mcpServers | Add-Member -NotePropertyName "gemini" -NotePropertyValue @{
-                command = $InstallPath
-                args = @()
-            } -Force
-
-            $config | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-            Write-Success "已更新 Claude Code 配置: $configFile"
-        }
-        catch {
-            Write-Warn "无法解析现有配置文件，请手动编辑 $configFile"
-            Write-Info "添加以下内容到 mcpServers 中:"
-            Write-Host ""
-            Write-Host '    "gemini": {'
-            Write-Host "      `"command`": `"$($InstallPath.Replace('\', '\\'))`","
-            Write-Host '      "args": []'
-            Write-Host '    }'
-            return
-        }
-    }
-    else {
-        # 创建新配置
-        $config = @{
-            mcpServers = @{
-                gemini = @{
-                    command = $InstallPath
-                    args = @()
+    # 检查是否已存在 gemini MCP
+    if (Test-ExistingMcp) {
+        Write-Warn "检测到已存在 gemini MCP 配置"
+        $removeExisting = Read-Host "是否先删除现有配置再添加? [Y/n]"
+        if ($removeExisting -ne "n" -and $removeExisting -ne "N") {
+            Write-Info "正在删除现有 gemini MCP 配置..."
+            try {
+                & claude mcp remove gemini 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "已删除现有配置"
+                }
+                else {
+                    Write-Err "删除失败，请手动运行: claude mcp remove gemini"
+                    return $false
                 }
             }
+            catch {
+                Write-Err "删除失败，请手动运行: claude mcp remove gemini"
+                return $false
+            }
         }
-        $config | ConvertTo-Json -Depth 10 | Set-Content $configFile -Encoding UTF8
-        Write-Success "已创建 Claude Code 配置: $configFile"
+        else {
+            Write-Info "跳过 MCP 配置"
+            return $true
+        }
+    }
+
+    # 添加 MCP 配置
+    Write-Info "正在添加 gemini MCP 配置..."
+    try {
+        & claude mcp add gemini $InstallPath 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "已成功添加 gemini MCP 配置"
+            return $true
+        }
+        else {
+            Write-Err "添加失败，请手动运行: claude mcp add gemini `"$InstallPath`""
+            return $false
+        }
+    }
+    catch {
+        Write-Err "添加失败，请手动运行: claude mcp add gemini `"$InstallPath`""
+        return $false
     }
 }
 
@@ -216,13 +217,19 @@ function Main {
             if ($forceReinstall -ne "y" -and $forceReinstall -ne "Y") {
                 exit 0
             }
+            Write-Info "正在重新安装 $latestVersion..."
         }
         else {
+            Write-Info "发现新版本: v$installedVersion -> $latestVersion"
             $doUpdate = Read-Host "是否更新到 $latestVersion? [Y/n]"
             if ($doUpdate -eq "n" -or $doUpdate -eq "N") {
                 exit 0
             }
+            Write-Info "正在更新到 $latestVersion..."
         }
+    }
+    else {
+        Write-Info "正在安装 $latestVersion..."
     }
 
     # 下载并安装
@@ -247,13 +254,10 @@ function Main {
     }
 
     Write-Host ""
-    Write-Success "安装完成！"
+    Write-Success "安装完成！版本: $latestVersion"
     Write-Host ""
     Write-Host "使用方法:"
     Write-Host "  $installPath --help"
-    Write-Host ""
-    Write-Host "如需手动配置 Claude Code，请编辑 ~/.claude.json 或运行:"
-    Write-Host "  claude mcp add gemini `"$installPath`""
     Write-Host ""
 }
 

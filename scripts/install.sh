@@ -117,69 +117,56 @@ download_and_install() {
     print_success "已安装到: $install_path"
 }
 
+# 检查 gemini MCP 是否已存在
+check_existing_mcp() {
+    if ! command -v claude &> /dev/null; then
+        return 1
+    fi
+
+    # 检查 gemini 是否已在 MCP 列表中
+    if claude mcp list 2>/dev/null | grep -q "gemini"; then
+        return 0
+    fi
+    return 1
+}
+
 # 配置 Claude Code
 configure_claude_code() {
     local install_path="$1"
 
     # 检查 claude 命令是否可用
-    if command -v claude &> /dev/null; then
-        print_info "检测到 Claude Code CLI，尝试使用 claude mcp add 命令..."
+    if ! command -v claude &> /dev/null; then
+        print_error "未找到 claude 命令，请先安装 Claude Code CLI"
+        print_info "安装后可手动运行: claude mcp add gemini \"$install_path\""
+        return 1
+    fi
 
-        # 使用 claude mcp add 命令添加配置
-        if claude mcp add gemini "$install_path" 2>/dev/null; then
-            print_success "已通过 Claude CLI 添加 gemini MCP 配置"
-            return 0
+    # 检查是否已存在 gemini MCP
+    if check_existing_mcp; then
+        print_warning "检测到已存在 gemini MCP 配置"
+        read -p "是否先删除现有配置再添加? [Y/n]: " remove_existing
+        if [ "$remove_existing" != "n" ] && [ "$remove_existing" != "N" ]; then
+            print_info "正在删除现有 gemini MCP 配置..."
+            if claude mcp remove gemini 2>/dev/null; then
+                print_success "已删除现有配置"
+            else
+                print_error "删除失败，请手动运行: claude mcp remove gemini"
+                return 1
+            fi
         else
-            print_warning "claude mcp add 命令失败，尝试手动配置..."
+            print_info "跳过 MCP 配置"
+            return 0
         fi
     fi
 
-    # 手动配置 ~/.claude.json
-    local config_file="$HOME/.claude.json"
-
-    if [ -f "$config_file" ]; then
-        # 备份原配置
-        cp "$config_file" "${config_file}.backup"
-        print_info "已备份原配置到: ${config_file}.backup"
-
-        # 检查是否已经配置了 gemini
-        if grep -q '"gemini"' "$config_file"; then
-            print_warning "配置中已存在 gemini，正在更新..."
-        fi
-
-        # 使用 jq 如果可用
-        if command -v jq &> /dev/null; then
-            local tmp_config=$(mktemp)
-            # 确保 mcpServers 存在并添加 gemini
-            jq --arg path "$install_path" '
-                .mcpServers //= {} |
-                .mcpServers.gemini = {"command": $path, "args": []}
-            ' "$config_file" > "$tmp_config"
-            mv "$tmp_config" "$config_file"
-            print_success "已更新 Claude Code 配置: $config_file"
-        else
-            print_warning "未找到 jq 工具，请手动编辑 $config_file"
-            print_info "添加以下内容到 mcpServers 中:"
-            echo ""
-            echo '    "gemini": {'
-            echo "      \"command\": \"$install_path\","
-            echo '      "args": []'
-            echo '    }'
-            echo ""
-        fi
+    # 添加 MCP 配置
+    print_info "正在添加 gemini MCP 配置..."
+    if claude mcp add gemini "$install_path" 2>/dev/null; then
+        print_success "已成功添加 gemini MCP 配置"
+        return 0
     else
-        # 创建新配置文件
-        cat > "$config_file" << EOF
-{
-  "mcpServers": {
-    "gemini": {
-      "command": "$install_path",
-      "args": []
-    }
-  }
-}
-EOF
-        print_success "已创建 Claude Code 配置: $config_file"
+        print_error "添加失败，请手动运行: claude mcp add gemini \"$install_path\""
+        return 1
     fi
 }
 
@@ -222,12 +209,17 @@ main() {
             if [ "$force_reinstall" != "y" ] && [ "$force_reinstall" != "Y" ]; then
                 exit 0
             fi
+            print_info "正在重新安装 $latest_version..."
         else
+            print_info "发现新版本: v$installed_version -> $latest_version"
             read -p "是否更新到 $latest_version? [Y/n]: " do_update
             if [ "$do_update" = "n" ] || [ "$do_update" = "N" ]; then
                 exit 0
             fi
+            print_info "正在更新到 $latest_version..."
         fi
+    else
+        print_info "正在安装 $latest_version..."
     fi
 
     # 下载并安装
@@ -250,13 +242,10 @@ main() {
     fi
 
     echo ""
-    print_success "安装完成！"
+    print_success "安装完成！版本: $latest_version"
     echo ""
     echo "使用方法:"
     echo "  $install_path --help"
-    echo ""
-    echo "如需手动配置 Claude Code，请编辑 ~/.claude.json 或运行:"
-    echo "  claude mcp add gemini $install_path"
     echo ""
 }
 
