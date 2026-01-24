@@ -51,17 +51,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
-      - name: Install musl cross-compilation tools (Linux ARM64)
+      - name: Install cross (Linux ARM64 musl)
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          curl -L -o aarch64-linux-musl-cross.tgz https://musl.cc/aarch64-linux-musl-cross.tgz
-          tar -xf aarch64-linux-musl-cross.tgz
-          echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (Linux ARM64 musl via cross)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: cross build --release --locked --target ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-        env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-musl-gcc
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Rename artifact
         shell: bash
