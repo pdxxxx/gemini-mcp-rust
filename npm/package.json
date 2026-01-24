@@ -1,0 +1,35 @@
+{
+  "name": "gemini-mcp-rust",
+  "version": "0.1.1",
+  "description": "Interactive installer for Gemini MCP Server (Rust) - A high-performance MCP server wrapping Gemini CLI",
+  "type": "module",
+  "bin": {
+    "gemini-mcp-rust": "./bin/cli.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pdxxxx/gemini-mcp-rust.git"
+  },
+  "keywords": [
+    "gemini",
+    "mcp",
+    "claude",
+    "cli",
+    "installer"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/pdxxxx/gemini-mcp-rust/issues"
+  },
+  "homepage": "https://github.com/pdxxxx/gemini-mcp-rust#readme",
+  "dependencies": {
+    "@inquirer/prompts": "^7.0.0"
+  }
+}

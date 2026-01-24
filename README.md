@@ -11,34 +11,26 @@
 
 ## 安装
 
-### 方式一：使用安装脚本（推荐）
+### 方式一：使用 npx 安装（推荐）
 
-**Linux / macOS:**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/pdxxxx/gemini-mcp-rust/main/scripts/install.sh | bash
-```
-
-或者下载后手动执行：
+使用交互式安装程序，支持安装、配置、更新和卸载：
 
 ```bash
-wget https://raw.githubusercontent.com/pdxxxx/gemini-mcp-rust/main/scripts/install.sh
-chmod +x install.sh
-./install.sh
+npx gemini-mcp-rust@latest
 ```
 
-**Windows (PowerShell):**
+安装程序提供以下功能：
 
-```powershell
-irm https://raw.githubusercontent.com/pdxxxx/gemini-mcp-rust/main/scripts/install.ps1 | iex
-```
+| 选项 | 功能 | 说明 |
+|------|------|------|
+| 1. Install | 安装 | 自动检测系统架构，下载并安装最新版本 |
+| 2. Configure | 配置 | 将 gemini-mcp 注册到 Claude Code |
+| 3. Update | 更新 | 检查新版本并升级 |
+| 4. Uninstall | 卸载 | 删除二进制文件和 Claude 配置 |
 
-或者下载后手动执行：
-
-```powershell
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/pdxxxx/gemini-mcp-rust/main/scripts/install.ps1 -OutFile install.ps1
-.\install.ps1
-```
+**默认安装路径：**
+- Linux/macOS: `~/.local/bin/gemini-mcp`
+- Windows: `%LOCALAPPDATA%\Programs\gemini-mcp\gemini-mcp.exe`
 
 ### 方式二：从 GitHub Release 手动下载
 
